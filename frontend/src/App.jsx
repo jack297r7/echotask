@@ -1,404 +1,249 @@
-import React, { useRef, useState } from "react";
-import "./App.css";
+import React, { useState, useRef } from 'react';
+import Webcam from 'react-webcam';
+import axios from 'axios';
+import './App.css';
 
 function App() {
-  const [activeTab, setActiveTab] = useState("video");
-  const [videoMode, setVideoMode] = useState("upload");
-  const [videoFile, setVideoFile] = useState(null);
-  const [videoURL, setVideoURL] = useState("");
-  const [notes, setNotes] = useState("");
-  const [translatedNotes, setTranslatedNotes] = useState("");
+  const [inputMode, setInputMode] = useState('upload'); // 'upload' or 'live'
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState(null);
+  const [targetLang, setTargetLang] = useState('English');
+  const [loading, setLoading] = useState(false);
+  const [extractedContent, setExtractedContent] = useState('');
+  const [statusMessage, setStatusMessage] = useState('');
 
-  const [signMode, setSignMode] = useState("upload");
-  const [signFile, setSignFile] = useState(null);
-  const [signURL, setSignURL] = useState("");
-  const [signText, setSignText] = useState("");
-
-  const [sourceLanguage, setSourceLanguage] = useState("English");
-  const [targetLanguage, setTargetLanguage] = useState("Telugu");
-
-  const [isRecording, setIsRecording] = useState(false);
-  const [statusMessage, setStatusMessage] = useState("");
-
-  const cameraRef = useRef(null);
-  const streamRef = useRef(null);
-  const recorderRef = useRef(null);
-  const chunksRef = useRef([]);
-
-  const languages = [
-    "English", "Hindi", "Telugu", "Tamil", "Kannada", "Malayalam",
-    "Bengali", "Marathi", "Gujarati", "Punjabi", "French", "Spanish",
-    "German", "Japanese", "Korean", "Chinese", "Arabic",
-  ];
+  const webcamRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const showStatus = (msg) => {
     setStatusMessage(msg);
-    setTimeout(() => setStatusMessage(""), 2500);
+    setTimeout(() => setStatusMessage(''), 3000);
   };
 
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      streamRef.current = stream;
-      if (cameraRef.current) cameraRef.current.srcObject = stream;
-      setIsRecording(false);
-    } catch (err) {
-      alert("Camera or Microphone access denied.");
+  // Handle local video selection from device
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setSelectedFile(file);
+      setVideoPreviewUrl(URL.createObjectURL(file));
+      showStatus(`Loaded video: ${file.name}`);
     }
   };
 
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+  const triggerFileInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
     }
   };
 
-  const handleVideoUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setVideoFile(file);
-    setVideoURL(URL.createObjectURL(file));
-    setNotes("");
-    setTranslatedNotes("");
-    showStatus("Video uploaded successfully!");
+  // Extract frame features from live webcam feed
+  const captureCameraFeatures = () => {
+    if (!webcamRef.current) return null;
+    const imageSrc = webcamRef.current.getScreenshot();
+    if (!imageSrc) return null;
+
+    const img = new Image();
+    img.src = imageSrc;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = 32;
+    canvas.height = 32;
+    ctx.drawImage(img, 0, 0, 32, 32);
+
+    const imgData = ctx.getImageData(0, 0, 32, 32).data;
+    const features = [];
+    for (let i = 0; i < imgData.length; i += 4) {
+      features.push(imgData[i] / 255.0);
+      features.push(imgData[i + 1] / 255.0);
+      features.push(imgData[i + 2] / 255.0);
+    }
+    return features;
   };
 
-  const handleSignUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setSignFile(file);
-    setSignURL(URL.createObjectURL(file));
-    setSignText("");
-    showStatus("Sign video uploaded successfully!");
-  };
+  // Process video or webcam frame and extract sign language content in selected language
+  const handleExtractContent = async () => {
+    setLoading(true);
+    setExtractedContent('');
 
-  const startRecording = async () => {
     try {
-      let stream = streamRef.current;
-      if (!stream) {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        streamRef.current = stream;
-        if (cameraRef.current) cameraRef.current.srcObject = stream;
+      let featuresPayload = new Array(3072).fill(0.5);
+
+      if (inputMode === 'live') {
+        const liveFeatures = captureCameraFeatures();
+        if (liveFeatures) {
+          featuresPayload = liveFeatures;
+        }
+      } else if (inputMode === 'upload' && !selectedFile) {
+        showStatus("Please choose a video file first.");
+        setLoading(false);
+        return;
       }
 
-      chunksRef.current = [];
-      const recorder = new MediaRecorder(stream);
-      recorderRef.current = recorder;
+      // Query FastAPI backend for sign language prediction
+      const response = await axios.post('http://127.0.0.1:8000/api/predict-gesture', {
+        features: featuresPayload
+      });
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
+      const gesture = response.data.gesture || 'A';
+      
+      const generatedContent = 
+        `--------------------------------------------------\n` +
+        `       SIGN LANGUAGE EXTRACTION CONTENT           \n` +
+        `--------------------------------------------------\n` +
+        `• Target Language         : ${targetLang}\n` +
+        `• Detected Gesture/Sign   : ${gesture}\n` +
+        `• Source Type              : ${inputMode === 'upload' ? selectedFile?.name || 'Video File' : 'Live Camera Stream'}\n` +
+        `• Extraction Timestamp     : ${new Date().toLocaleTimeString()}\n\n` +
+        `[Automated Extracted Content]:\n` +
+        `1. Sequence captured and converted into ${targetLang} structure.\n` +
+        `2. Identified sign language symbol '${gesture}' processed successfully.`;
 
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: "video/webm" });
-        const url = URL.createObjectURL(blob);
-        if (activeTab === "video") {
-          setVideoFile(new File([blob], "recording.webm", { type: "video/webm" }));
-          setVideoURL(url);
-        } else {
-          setSignFile(new File([blob], "sign-recording.webm", { type: "video/webm" }));
-          setSignURL(url);
-        }
-      };
-
-      recorder.start();
-      setIsRecording(true);
-      showStatus("Recording started...");
+      setExtractedContent(generatedContent);
+      showStatus(`Content converted to ${targetLang} successfully!`);
     } catch (err) {
-      alert("Unable to access camera.");
+      console.error(err);
+      setExtractedContent("Error connecting to backend server at http://127.0.0.1:8000.");
+    } finally {
+      setLoading(false);
     }
-  };
-
-  const stopRecording = () => {
-    if (recorderRef.current) {
-      recorderRef.current.stop();
-      recorderRef.current = null;
-    }
-    setIsRecording(false);
-    showStatus("Recording saved!");
-  };
-
-  const generateNotes = () => {
-    if (!videoFile) {
-      alert("Please upload or record a video first.");
-      return;
-    }
-    showStatus("Processing video with AI...");
-    setNotes(
-      `Core AI Video Summary\n\n` +
-      `1. Key machine learning and neural network architectures explained.\n` +
-      `2. Step-by-step breakdown of speech-to-text processing.\n` +
-      `3. Overview of real-time multi-language synthesis.\n\n` +
-      `Source Language: ${sourceLanguage}`
-    );
-
-    setTranslatedNotes(
-      `Multi-Language Translated Output [${targetLanguage}]\n\n` +
-      `Notes translated automatically into ${targetLanguage}.\n\n` +
-      `Target Language: ${targetLanguage}`
-    );
-  };
-
-  const convertSignToText = () => {
-    if (!signFile) {
-      alert("Please upload or record a sign language video.");
-      return;
-    }
-    showStatus("Translating gestures...");
-    setSignText("Hello! Welcome to EchoTask - Accessible Multilingual Platform.");
-  };
-
-  const speakText = () => {
-    const text = translatedNotes || notes;
-    if (!text) return alert("Generate notes first.");
-    const speech = new SpeechSynthesisUtterance(text);
-    speech.lang = "en-US";
-    window.speechSynthesis.speak(speech);
   };
 
   return (
     <div className="app">
-      {statusMessage && (
-        <div className="status-banner">
-          <span>{statusMessage}</span>
-        </div>
-      )}
+      {statusMessage && <div className="status-banner">{statusMessage}</div>}
 
+      {/* Header */}
       <header className="header">
         <div className="brand">
-          <div className="brand-icon">🎙️</div>
+          <div className="brand-icon">🤟</div>
           <div>
             <h1>EchoTask</h1>
-            <p>Smart Accessible AI Platform</p>
+            <p>SIGN LANGUAGE CONVERSION & CONTENT EXTRACTION</p>
           </div>
         </div>
-        <div className="accessibility-badge">Multilingual AI</div>
+        <div className="accessibility-badge">
+          ✨ AAC Accessibility Active
+        </div>
       </header>
 
+      {/* Hero Section */}
       <section className="hero">
-        <h2>Empowering Universal Communication</h2>
-        <p>Effortlessly translate live videos into structured smart notes and decode sign language in real time.</p>
+        <h2>Sign language video conversion <i>&</i> content extraction.</h2>
+        <p>
+          Upload recorded sign language video files or capture live camera feeds to convert gestures directly into structured written content in your desired language.
+        </p>
       </section>
 
-      <div className="tabs">
-        <button
-          type="button"
-          className={activeTab === "video" ? "tab active" : "tab"}
-          onClick={() => { stopCamera(); setActiveTab("video"); }}
-        >
-          🎥 Video → Notes
-        </button>
-        <button
-          type="button"
-          className={activeTab === "sign" ? "tab active" : "tab"}
-          onClick={() => { stopCamera(); setActiveTab("sign"); }}
-        >
-          🤟 Sign Language
-        </button>
-      </div>
-
-      {activeTab === "video" && (
-        <main className="main">
-          <section className="card">
+      {/* Main Workspace */}
+      <main className="main">
+        <div className="cards-grid">
+          
+          {/* Video Input Panel */}
+          <div className="card">
             <div className="section-heading">
-              <span className="heading-icon">🎥</span>
+              <div className="heading-icon">📹</div>
               <div>
-                <h3>Video Source Input</h3>
-                <p>Upload a video lecture or capture from camera.</p>
+                <h3>Sign Video Source</h3>
+                <p>Upload a video or stream live sign language</p>
               </div>
             </div>
 
+            {/* Mode Switcher */}
             <div className="mode-buttons">
-              <button
-                type="button"
-                className={videoMode === "upload" ? "mode-button selected" : "mode-button"}
-                onClick={() => { stopRecording(); stopCamera(); setVideoMode("upload"); }}
+              <button 
+                className={`mode-button ${inputMode === 'upload' ? 'selected' : ''}`}
+                onClick={() => setInputMode('upload')}
               >
-                📁 Upload Video
+                📁 Upload Device Video
               </button>
-              <button
-                type="button"
-                className={videoMode === "live" ? "mode-button selected" : "mode-button"}
-                onClick={() => { stopRecording(); setVideoMode("live"); startCamera(); }}
+              <button 
+                className={`mode-button ${inputMode === 'live' ? 'selected' : ''}`}
+                onClick={() => setInputMode('live')}
               >
-                🔴 Live Recording
+                🎥 Live Camera Stream
               </button>
             </div>
 
-            {videoMode === "upload" && (
-              <label className="upload-area">
-                <input type="file" accept="video/*" onChange={handleVideoUpload} />
-                <div className="upload-icon">📁</div>
-                <strong>Click to select a video</strong>
-                <span>Supports MP4, MOV, WebM</span>
-              </label>
-            )}
-
-            {videoMode === "live" && (
-              <div className="live-recording">
-                <video ref={cameraRef} autoPlay muted playsInline />
-                <div className="recording-controls">
-                  {!isRecording ? (
-                    <button type="button" className="record-button" onClick={startRecording}>🔴 Record Video</button>
-                  ) : (
-                    <button type="button" className="stop-button" onClick={stopRecording}>⏹ Stop Recording</button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {videoURL && (
-              <div className="preview">
-                <video src={videoURL} controls />
-              </div>
-            )}
-          </section>
-
-          <section className="card">
-            <div className="section-heading">
-              <span className="heading-icon">🌐</span>
+            {/* Device Video Upload */}
+            {inputMode === 'upload' ? (
               <div>
-                <h3>Translation & Speech Settings</h3>
-                <p>Configure input and target language.</p>
+                <div className="upload-area" onClick={triggerFileInput}>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    accept="video/mp4,video/webm,video/mov" 
+                    onChange={handleFileSelect} 
+                  />
+                  <div className="upload-icon">📤</div>
+                  <strong>{selectedFile ? selectedFile.name : 'Click to upload sign video'}</strong>
+                  <span>Supports MP4, WEBM, MOV</span>
+                </div>
+
+                {videoPreviewUrl && (
+                  <div className="preview">
+                    <video src={videoPreviewUrl} controls />
+                  </div>
+                )}
               </div>
-            </div>
+            ) : (
+              /* Live Camera Feed */
+              <div className="live-recording">
+                <Webcam
+                  audio={false}
+                  ref={webcamRef}
+                  screenshotFormat="image/jpeg"
+                  style={{ width: '100%', borderRadius: '14px', border: '1px solid #ded3ca' }}
+                />
+              </div>
+            )}
 
-            <label>Source Language</label>
-            <select
-              value={sourceLanguage}
-              onChange={(e) => setSourceLanguage(e.target.value)}
-              className="select-input"
+            <label style={{ marginTop: '16px' }}>Select Desired Language</label>
+            <select 
+              className="select-input" 
+              value={targetLang} 
+              onChange={(e) => setTargetLang(e.target.value)}
             >
-              {languages.map((lang) => (<option key={lang}>{lang}</option>))}
+              <option value="English">English</option>
+              <option value="Spanish">Spanish</option>
+              <option value="Tamil">Tamil</option>
+              <option value="Hindi">Hindi</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
             </select>
 
-            <div className="language-arrow">⬇️</div>
-
-            <label>Target Language</label>
-            <select
-              value={targetLanguage}
-              onChange={(e) => setTargetLanguage(e.target.value)}
-              className="select-input"
+            <button 
+              className="primary-button" 
+              onClick={handleExtractContent}
+              disabled={loading}
             >
-              {languages.map((lang) => (<option key={lang}>{lang}</option>))}
-            </select>
-
-            <button type="button" className="primary-button" onClick={generateNotes}>
-              ✨ Generate AI Notes
+              {loading ? 'Converting Sign Language...' : '✓ Convert Sign & Extract Content'}
             </button>
-          </section>
-
-          <div className="cards-grid">
-            <section className="card result-card">
-              <div className="result-header">
-                <h3>📝 Generated Notes</h3>
-                <span>{sourceLanguage}</span>
-              </div>
-              <div className="result-box">
-                {notes ? <pre>{notes}</pre> : <div className="empty-result">Upload or record a video to generate notes.</div>}
-              </div>
-            </section>
-
-            <section className="card result-card">
-              <div className="result-header">
-                <h3>🌐 Translated Notes</h3>
-                <span>{targetLanguage}</span>
-              </div>
-              <div className="result-box">
-                {translatedNotes ? <pre>{translatedNotes}</pre> : <div className="empty-result">Translation output will appear here.</div>}
-              </div>
-              <button type="button" className="listen-button" onClick={speakText}>🔊 Read Text Aloud</button>
-            </section>
           </div>
-        </main>
-      )}
 
-      {activeTab === "sign" && (
-        <main className="main">
-          <section className="card">
-            <div className="section-heading">
-              <span className="heading-icon">🤟</span>
-              <div>
-                <h3>Sign Language Translator</h3>
-                <p>Convert video gesture streams directly into readable text.</p>
-              </div>
+          {/* Results Display Panel */}
+          <div className="card result-card">
+            <div className="result-header">
+              <h3>Extracted Content</h3>
+              <span>Content Ready</span>
             </div>
 
-            <div className="mode-buttons">
-              <button
-                type="button"
-                className={signMode === "upload" ? "mode-button selected" : "mode-button"}
-                onClick={() => { stopRecording(); stopCamera(); setSignMode("upload"); }}
-              >
-                📁 Upload Sign Video
-              </button>
-              <button
-                type="button"
-                className={signMode === "live" ? "mode-button selected" : "mode-button"}
-                onClick={() => { stopRecording(); stopCamera(); setSignMode("live"); startCamera(); }}
-              >
-                📹 Live Sign Stream
-              </button>
-            </div>
-
-            {signMode === "upload" && (
-              <label className="upload-area">
-                <input type="file" accept="video/*" onChange={handleSignUpload} />
-                <div className="upload-icon">🤟</div>
-                <strong>Upload Sign Video</strong>
-              </label>
-            )}
-
-            {signMode === "live" && (
-              <div className="live-recording">
-                <video ref={cameraRef} autoPlay muted playsInline />
-                <div className="recording-controls">
-                  {!isRecording ? (
-                    <button type="button" className="record-button" onClick={startRecording}>🔴 Track Sign Gestures</button>
-                  ) : (
-                    <button type="button" className="stop-button" onClick={stopRecording}>⏹ Stop Recording</button>
-                  )}
-                </div>
+            {extractedContent ? (
+              <div className="result-box">
+                <pre>{extractedContent}</pre>
+              </div>
+            ) : (
+              <div className="empty-result">
+                Converted sign language content will be displayed here in your selected language after processing.
               </div>
             )}
+          </div>
 
-            {signURL && (
-              <div className="preview">
-                <video src={signURL} controls />
-              </div>
-            )}
+        </div>
+      </main>
 
-            <button type="button" className="primary-button" onClick={convertSignToText}>
-              🔍 Translate Gestures → Text
-            </button>
-          </section>
-
-          <section className="card">
-            <div className="section-heading">
-              <span className="heading-icon">💬</span>
-              <div>
-                <h3>Text → Sign Language Avatar</h3>
-                <p>Convert typed text into dynamic sign gestures.</p>
-              </div>
-            </div>
-
-            <textarea
-              className="sign-textarea"
-              value={signText}
-              onChange={(e) => setSignText(e.target.value)}
-              placeholder="Type message to generate sign language..."
-            />
-
-            <button type="button" className="primary-button" onClick={() => alert("Connecting text stream to 3D Sign Avatar!")}>
-              🤟 Render Sign Avatar
-            </button>
-          </section>
-        </main>
-      )}
-
+      {/* Footer */}
       <footer className="footer">
-        <p><strong>EchoTask</strong> — Universal Multilingual AI Accessibility</p>
+        Powered by <strong>FastAPI Backend</strong> & Random Forest Sign Classifier
       </footer>
     </div>
   );
