@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>EchoTask Full Backend Test</title>
+</head>
+<body>
+
+<h1>EchoTask Full Pipeline Test</h1>
+
+<input type="file" id="audio" accept="audio/*">
+
+<br><br>
+
+<button onclick="processAudio()">Process Audio</button>
+
+<h2>Result</h2>
+
+<pre id="result"></pre>
+
+<script>
+async function processAudio() {
+  const fileInput = document.getElementById("audio");
+  const result = document.getElementById("result");
+
+  if (!fileInput.files.length) {
+    result.textContent = "Please select an audio file.";
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("audio", fileInput.files[0]);
+
+  result.textContent = "Processing audio...";
+
+  try {
+    const response = await fetch(
+      "http://localhost:5050/api/process-audio",
+      {
+        method: "POST",
+        body: formData
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.details || data.error || "Request failed");
+    }
+
+    result.textContent = JSON.stringify(data, null, 2);
+  } catch (error) {
+    result.textContent = "Error: " + error.message;
+  }
+}
+</script>
+
+</body>
+</html>
